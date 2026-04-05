@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Image to ASCII</title>
+</head>
+<body>
+  <canvas id="cvs" style="display:none;"></canvas>
+  <script>
+  window['ai_edge_gallery_get_result'] = async (dataStr) => {
+    try {
+      const params = JSON.parse(dataStr || '{}');
+      const imageData = params.imageData;
+      const targetCols = Math.max(20, Math.min(200, parseInt(params.width) || 80));
+      const mode = params.mode === 'block' ? 'block' : 'simple';
+
+      if (!imageData || typeof imageData !== 'string') {
+        return JSON.stringify({ error: 'Missing imageData.' });
+      }
+      if (!imageData.startsWith('data:image/')) {
+        return JSON.stringify({ error: 'imageData must be a base64 data URL.' });
+      }
+
+      const CHAR_SETS = {
+        simple: '@#S%?*+;:. ',
+        block:  '\u2588\u2593\u2592\u2591 ',
+      };
+      const chars = CHAR_SETS[mode];
+
+      const img = await new Promise((resolve, reject) => {
+        const el = new Image();
+        el.onload = () => resolve(el);
+        el.onerror = () => reject(new Error('Failed to load image.'));
+        el.src = imageData;
+      });
+
+      if (img.naturalWidth === 0 || img.naturalHeight === 0) {
+        return JSON.stringify({ error: 'Invalid image dimensions.' });
+      }
+
+      const aspectRatio = img.naturalHeight / img.naturalWidth;
+      const targetRows = Math.max(10, Math.round(targetCols * aspectRatio * 0.45));
+
+      const canvas = document.getElementById('cvs');
+      canvas.width = targetCols;
+      canvas.height = targetRows;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, targetCols, targetRows);
+
+      const { data } = ctx.getImageData(0, 0, targetCols, targetRows);
+      const rows = [];
+
+      for (let row = 0; row < targetRows; row++) {
+        let line = '';
+        for (let col = 0; col < targetCols; col++) {
+          const idx = (row * targetCols + col) * 4;
+          const alpha = data[idx + 3] / 255;
+          const luminance =
+            (data[idx] * 0.2126 + data[idx+1] * 0.7152 + data[idx+2] * 0.0722) * alpha +
+            255 * (1 - alpha);
+          line += chars[Math.floor((luminance / 255) * (chars.length - 1))];
+        }
+        rows.push(line);
+      }
+
+      const note = targetCols + 'x' + targetRows + ' ' + (mode === 'block' ? 'block' : 'simple');
+      const result = 'ASCII Art (' + note + '):\n```\n' + rows.join('\n') + '\n```';
+      return JSON.stringify({ result });
+
+    } catch (e) {
+      return JSON.stringify({ error: 'Conversion failed: ' + e.message });
+    }
+  };
+  </script>
+</body>
+</html>
