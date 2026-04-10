@@ -22,6 +22,10 @@
       if (!imageData.startsWith('data:')) {
         imageData = 'data:image/jpeg;base64,' + imageData;
       }
+      // HEIF/HEIC is not supported in WebView canvas
+      if (imageData.includes('image/heic') || imageData.includes('image/heif')) {
+        return JSON.stringify({ error: 'HEIF/HEIC format is not supported. Please share a JPEG or PNG image.' });
+      }
 
       const CHAR_SETS = {
         simple: '@#S%?*+;:. ',
