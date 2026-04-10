@@ -18,8 +18,9 @@
       if (!imageData || typeof imageData !== 'string') {
         return JSON.stringify({ error: 'Missing imageData.' });
       }
-      if (!imageData.startsWith('data:image/')) {
-        return JSON.stringify({ error: 'imageData must be a base64 data URL.' });
+      // Auto-fix missing data URL prefix
+      if (!imageData.startsWith('data:')) {
+        imageData = 'data:image/jpeg;base64,' + imageData;
       }
 
       const CHAR_SETS = {
