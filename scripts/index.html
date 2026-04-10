@@ -8,24 +8,53 @@
 <body>
   <canvas id="cvs" style="display:none;"></canvas>
   <script>
+  function detectMimeType(base64) {
+    if (base64.startsWith('/9j/'))     return 'image/jpeg';
+    if (base64.startsWith('iVBORw0K')) return 'image/png';
+    if (base64.startsWith('R0lGOD'))   return 'image/gif';
+    if (base64.startsWith('UklGR'))    return 'image/webp';
+    if (base64.startsWith('AAAA') ||
+        base64.startsWith('////'))     return 'image/heic';
+    return 'image/jpeg';
+  }
+
+  function toDataUrl(raw) {
+    if (raw.startsWith('data:')) return raw;
+    const mime = detectMimeType(raw);
+    return `data:${mime};base64,${raw}`;
+  }
+
+  async function loadImageSource(dataUrl) {
+    // Try createImageBitmap first — broader format support (incl. HEIF on iOS)
+    if (typeof createImageBitmap !== 'undefined') {
+      try {
+        const blob = await fetch(dataUrl).then(r => r.blob());
+        const bitmap = await createImageBitmap(blob);
+        return bitmap;
+      } catch (_) { /* fall through */ }
+    }
+    // Fallback: HTMLImageElement
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const timer = setTimeout(() => reject(new Error('Image load timed out.')), 10000);
+      img.onload  = () => { clearTimeout(timer); resolve(img); };
+      img.onerror = () => { clearTimeout(timer); reject(new Error('Failed to load image.')); };
+      img.src = dataUrl;
+    });
+  }
+
   window['ai_edge_gallery_get_result'] = async (dataStr) => {
     try {
       const params = JSON.parse(dataStr || '{}');
-      const imageData = params.imageData;
+      let imageData = params.imageData;
       const targetCols = Math.max(20, Math.min(200, parseInt(params.width) || 80));
       const mode = params.mode === 'block' ? 'block' : 'simple';
 
       if (!imageData || typeof imageData !== 'string') {
         return JSON.stringify({ error: 'Missing imageData.' });
       }
-      // Auto-fix missing data URL prefix
-      if (!imageData.startsWith('data:')) {
-        imageData = 'data:image/jpeg;base64,' + imageData;
-      }
-      // HEIF/HEIC is not supported in WebView canvas
-      if (imageData.includes('image/heic') || imageData.includes('image/heif')) {
-        return JSON.stringify({ error: 'HEIF/HEIC format is not supported. Please share a JPEG or PNG image.' });
-      }
+
+      const dataUrl = toDataUrl(imageData);
 
       const CHAR_SETS = {
         simple: '@#S%?*+;:. ',
@@ -33,26 +62,23 @@
       };
       const chars = CHAR_SETS[mode];
 
-      const img = await new Promise((resolve, reject) => {
-        const el = new Image();
-        const timer = setTimeout(() => reject(new Error('Image load timed out.')), 10000);
-        el.onload = () => { clearTimeout(timer); resolve(el); };
-        el.onerror = () => { clearTimeout(timer); reject(new Error('Failed to load image.')); };
-        el.src = imageData;
-      });
+      const source = await loadImageSource(dataUrl);
 
-      if (img.naturalWidth === 0 || img.naturalHeight === 0) {
+      const srcW = source.width  || source.naturalWidth;
+      const srcH = source.height || source.naturalHeight;
+
+      if (!srcW || !srcH) {
         return JSON.stringify({ error: 'Invalid image dimensions.' });
       }
 
-      const aspectRatio = img.naturalHeight / img.naturalWidth;
+      const aspectRatio = srcH / srcW;
       const targetRows = Math.max(10, Math.round(targetCols * aspectRatio * 0.45));
 
       const canvas = document.getElementById('cvs');
-      canvas.width = targetCols;
+      canvas.width  = targetCols;
       canvas.height = targetRows;
       const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, targetCols, targetRows);
+      ctx.drawImage(source, 0, 0, targetCols, targetRows);
 
       const { data } = ctx.getImageData(0, 0, targetCols, targetRows);
       const rows = [];
@@ -63,15 +89,15 @@
           const idx = (row * targetCols + col) * 4;
           const alpha = data[idx + 3] / 255;
           const luminance =
-            (data[idx] * 0.2126 + data[idx+1] * 0.7152 + data[idx+2] * 0.0722) * alpha +
+            (data[idx] * 0.2126 + data[idx + 1] * 0.7152 + data[idx + 2] * 0.0722) * alpha +
             255 * (1 - alpha);
           line += chars[Math.floor((luminance / 255) * (chars.length - 1))];
         }
         rows.push(line);
       }
 
-      const note = targetCols + 'x' + targetRows + ' ' + (mode === 'block' ? 'block' : 'simple');
-      const result = 'ASCII Art (' + note + '):\n```\n' + rows.join('\n') + '\n```';
+      const note = `${targetCols}x${targetRows} ${mode}`;
+      const result = `ASCII Art (${note}):\n\`\`\`\n${rows.join('\n')}\n\`\`\``;
       return JSON.stringify({ result });
 
     } catch (e) {
